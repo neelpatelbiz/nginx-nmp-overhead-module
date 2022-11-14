@@ -103,6 +103,16 @@ ngx_http_footer_header_filter(ngx_http_request_t *r)
 
     lcf = ngx_http_get_module_loc_conf(r, ngx_http_footer_filter_module);
 
+    ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_footer_ctx_t));
+    if (ctx == NULL) {
+       return NGX_ERROR;
+    }
+	ctx->file_len=lcf->file_len;
+	ctx->smart_buf=ngx_create_temp_buf(r->pool, ctx->file_len);
+    ngx_http_set_ctx(r, ctx, ngx_http_footer_filter_module);
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "Created SmartBuf for storing file of len: %d ", 
+				   ctx->file_len);
     if (lcf->variable == (ngx_http_complex_value_t *) -1
         || r->header_only
         || (r->method & NGX_HTTP_HEAD)
@@ -113,21 +123,11 @@ ngx_http_footer_header_filter(ngx_http_request_t *r)
         return ngx_http_next_header_filter(r);
     }
 
-    ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_footer_ctx_t));
-    if (ctx == NULL) {
-       return NGX_ERROR;
-    }
-	ctx->file_len=lcf->file_len;
-	ctx->smart_buf=ngx_create_temp_buf(r->pool, ctx->file_len);
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "Created SmartBuf for storing file of len: %d ", 
-				   ctx->file_len);
 
     if (ngx_http_complex_value(r, lcf->variable, &ctx->footer) != NGX_OK) {
         return NGX_ERROR;
     }
 
-    ngx_http_set_ctx(r, ctx, ngx_http_footer_filter_module);
 
     if (r->headers_out.content_length_n != -1) {
         r->headers_out.content_length_n += ctx->footer.len;
