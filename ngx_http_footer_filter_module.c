@@ -13,11 +13,14 @@ typedef struct {
     ngx_hash_t                          types;
     ngx_array_t                        *types_keys;
     ngx_http_complex_value_t           *variable;
+	off_t								flen;
 } ngx_http_footer_loc_conf_t;
 
 
 typedef struct {
     ngx_str_t                           footer;
+	ngx_buf_t							*smart_buf;
+	off_t								smart_off;
 } ngx_http_footer_ctx_t;
 
 
@@ -44,6 +47,13 @@ static ngx_command_t  ngx_http_footer_filter_commands[] = {
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_footer_loc_conf_t, types_keys),
       &ngx_http_html_default_types[0] },
+
+	{ ngx_string("sim_file_len"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_num_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_footer_loc_conf_t, flen),
+      NULL },
 
       ngx_null_command
 };
@@ -113,7 +123,18 @@ ngx_http_footer_header_filter(ngx_http_request_t *r)
 
     ngx_http_set_ctx(r, ctx, ngx_http_footer_filter_module);
 
+	/* baseline allocate smartbuf per request */
+	ctx->smart_buf=ngx_create_temp_buf(r->pool,lcf->flen);
+	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+				   "Created smartbuf of size: %d", 
+				   ngx_buf_size(ctx->smart_buf));
+
+	ctx->smart_off=0;
+
     if (r->headers_out.content_length_n != -1) {
+		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "http footer body filter: conent length: %d", 
+					   r->headers_out.content_length_n);
         r->headers_out.content_length_n += ctx->footer.len;
     }
 
@@ -131,10 +152,13 @@ ngx_http_footer_header_filter(ngx_http_request_t *r)
 static ngx_int_t
 ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 {
-    ngx_buf_t             *buf;
     ngx_uint_t             last;
     ngx_chain_t           *cl, *nl;
     ngx_http_footer_ctx_t *ctx;
+
+    ngx_http_footer_loc_conf_t *conf;
+
+    conf = ngx_http_get_module_loc_conf(r, ngx_http_footer_filter_module);
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "http footer body filter");
@@ -146,6 +170,7 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 
     last = 0;
 
+	/* do actual file size / CACHE_LINE_SIZE copies */
     for (cl = in; cl; cl = cl->next) {
          if (cl->buf->last_buf) {
              last = 1;
@@ -153,15 +178,32 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
          }
     }
 
-    if (!last) {
-        return ngx_http_next_body_filter(r, in);
-    }
+    if (last) {
+		/* copy to remaining space within SmartDIMM buf */
+		nl=in;
+		if (nl == NULL){
+			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+						   "NULL start buffer" );
+			return NGX_ERROR;
+		}
+		int ccs=ngx_buf_size(nl->buf);
+		while (ctx->smart_off < conf->flen){
+			if ( ccs > (conf->flen - ctx->smart_off) ){
+				ccs = (conf->flen - ctx->smart_off);
+			}
+			ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+						   "copy %d to smartbuf, flen: %d, offset: %d", 
+						   ccs, conf->flen, ctx->smart_off );
+			*(ctx->smart_buf->start+ctx->smart_off)=*(u_char *)"foo";
+			ctx->smart_off+=sizeof("foo");
+		}
+		ctx->smart_buf->last=ctx->smart_buf->start+ctx->smart_off;
+		ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "copy %d to smartbuf, flen: %d, offset: %d", 
+					   ccs, conf->flen, ctx->smart_off );
+	}
 
-    buf = ngx_calloc_buf(r->pool);
-    if (buf == NULL) {
-        return NGX_ERROR;
-    }
-
+	/*
     buf->pos = ctx->footer.data;
     buf->last = buf->pos + ctx->footer.len;
     buf->start = buf->pos;
@@ -182,8 +224,13 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         cl->next = nl;
         cl->buf->last_buf = 0;
     }
+	*/
 
-    return ngx_http_next_body_filter(r, in);
+    int rc =  ngx_http_next_body_filter(r, in);
+	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+				   "After ret: %d", 
+				   ngx_buf_size(ctx->smart_buf));
+	return rc;
 }
 
 
@@ -220,6 +267,7 @@ ngx_http_footer_create_loc_conf(ngx_conf_t *cf)
     ngx_http_footer_loc_conf_t  *conf;
 
     conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_footer_loc_conf_t));
+	conf->flen=NGX_CONF_UNSET_SIZE;
     if (conf == NULL) {
         return NULL;
     }
@@ -257,6 +305,7 @@ ngx_http_footer_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
     if (conf->variable == NULL) {
         conf->variable = (ngx_http_complex_value_t *) -1;
     }
+
 
     return NGX_CONF_OK;
 }
