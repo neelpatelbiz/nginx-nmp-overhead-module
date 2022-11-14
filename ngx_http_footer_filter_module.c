@@ -13,6 +13,7 @@ typedef struct {
     ngx_hash_t                          types;
     ngx_array_t                        *types_keys;
     ngx_http_complex_value_t           *variable;
+	size_t								file_len;
 } ngx_http_footer_loc_conf_t;
 
 
@@ -20,6 +21,7 @@ typedef struct {
     ngx_str_t                           footer;
 	ngx_buf_t							*smart_buf;
 	off_t								smart_off;
+	size_t								file_len;
 } ngx_http_footer_ctx_t;
 
 
@@ -46,6 +48,13 @@ static ngx_command_t  ngx_http_footer_filter_commands[] = {
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_footer_loc_conf_t, types_keys),
       &ngx_http_html_default_types[0] },
+
+    { ngx_string("file_length"),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_size_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_footer_loc_conf_t, file_len),
+      NULL },
 
       ngx_null_command
 };
@@ -108,6 +117,11 @@ ngx_http_footer_header_filter(ngx_http_request_t *r)
     if (ctx == NULL) {
        return NGX_ERROR;
     }
+	ctx->file_len=lcf->file_len;
+	ctx->smart_buf=ngx_create_temp_buf(r->pool, ctx->file_len);
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "Created SmartBuf for storing file of len: %d ", 
+				   ctx->file_len);
 
     if (ngx_http_complex_value(r, lcf->variable, &ctx->footer) != NGX_OK) {
         return NGX_ERROR;
@@ -149,10 +163,11 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
                    "http footer body filter");
 
 
+	buf=ctx->smart_buf;
 	cl=in;
 	b = cl->buf;
 	size = b->last - b->pos;
-	buf = ngx_create_temp_buf(r->pool, size);
+	//buf = ngx_create_temp_buf(r->pool, size);
 	/* do actual file size / CACHE_LINE_SIZE copies */
     for (cl = in; cl; cl = cl->next) {
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -206,7 +221,7 @@ ngx_http_footer_create_loc_conf(ngx_conf_t *cf)
     if (conf == NULL) {
         return NULL;
     }
-
+    conf->file_len = NGX_CONF_UNSET_SIZE;
     /*
      * set by ngx_pcalloc():
      *
