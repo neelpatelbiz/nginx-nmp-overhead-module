@@ -103,6 +103,16 @@ ngx_http_footer_header_filter(ngx_http_request_t *r)
 
     lcf = ngx_http_get_module_loc_conf(r, ngx_http_footer_filter_module);
 
+    ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_footer_ctx_t));
+    if (ctx == NULL) {
+       return NGX_ERROR;
+    }
+	ctx->file_len=lcf->file_len;
+	ctx->smart_buf=ngx_create_temp_buf(r->pool, ctx->file_len);
+    ngx_http_set_ctx(r, ctx, ngx_http_footer_filter_module);
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "Created SmartBuf for storing file of len: %d ", 
+				   ctx->file_len);
     if (lcf->variable == (ngx_http_complex_value_t *) -1
         || r->header_only
         || (r->method & NGX_HTTP_HEAD)
@@ -113,21 +123,11 @@ ngx_http_footer_header_filter(ngx_http_request_t *r)
         return ngx_http_next_header_filter(r);
     }
 
-    ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_footer_ctx_t));
-    if (ctx == NULL) {
-       return NGX_ERROR;
-    }
-	ctx->file_len=lcf->file_len;
-	ctx->smart_buf=ngx_create_temp_buf(r->pool, ctx->file_len);
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "Created SmartBuf for storing file of len: %d ", 
-				   ctx->file_len);
 
     if (ngx_http_complex_value(r, lcf->variable, &ctx->footer) != NGX_OK) {
         return NGX_ERROR;
     }
 
-    ngx_http_set_ctx(r, ctx, ngx_http_footer_filter_module);
 
     if (r->headers_out.content_length_n != -1) {
         r->headers_out.content_length_n += ctx->footer.len;
@@ -161,24 +161,58 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     }
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "http footer body filter");
+	if(	r->header_only
+        || (r->method & NGX_HTTP_HEAD)
+        || r != r->main
+        || r->headers_out.status == NGX_HTTP_NO_CONTENT){
+        return ngx_http_next_body_filter(r, in);
+	}
 
 
 	buf=ctx->smart_buf;
-	cl=in;
-	b = cl->buf;
-	size = b->last - b->pos;
 	//buf = ngx_create_temp_buf(r->pool, size);
 	/* do actual file size / CACHE_LINE_SIZE copies */
     for (cl = in; cl; cl = cl->next) {
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 					   "comp_cpy");
-		b = cl->buf;
+
+		if (cl->buf->last_buf)
+			break;
+		b=cl->buf;
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "aliased cl's buf");
+		if (ngx_buf_size(b) == 0)
+			continue;
+
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "setting size to copy to dbuf");
         size = b->last - b->pos;
-		buf->last = ngx_cpymem(buf->pos, b->pos, size);
-         if (cl->buf->last_buf) {
-             break;
-         }
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "copying to smart_buf");
+		buf->last = ngx_cpymem((buf->pos+ctx->smart_off), b->pos, size);
+		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "copied offset: @ %d", ctx->smart_off);
+		ctx->smart_off+=size;
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "Incremented smart_off");
     }
+	/*
+	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+				   "Size to copy: @ %d", size);
+	while ( ngx_buf_size(b)!=0 && last && ctx->smart_off < ctx->file_len
+			&& b->last > b->pos){
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "In Copy Remaining");
+		size=ctx->file_len-ctx->smart_off;
+		if ( size > (size_t)ngx_buf_size(b) )
+			size=ngx_buf_size(b);
+		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "comp_cpy remaining: @ %d", ctx->smart_off);
+		buf->last=ngx_cpymem((buf->pos+ctx->smart_off), b->pos,
+				size);
+		ctx->smart_off+=size;
+	}
+	*/
 
 
     return  ngx_http_next_body_filter(r, in);
