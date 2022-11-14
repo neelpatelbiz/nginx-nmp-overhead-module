@@ -13,7 +13,6 @@ typedef struct {
     ngx_hash_t                          types;
     ngx_array_t                        *types_keys;
     ngx_http_complex_value_t           *variable;
-	off_t								flen;
 } ngx_http_footer_loc_conf_t;
 
 
@@ -47,13 +46,6 @@ static ngx_command_t  ngx_http_footer_filter_commands[] = {
       NGX_HTTP_LOC_CONF_OFFSET,
       offsetof(ngx_http_footer_loc_conf_t, types_keys),
       &ngx_http_html_default_types[0] },
-
-	{ ngx_string("sim_file_len"),
-      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
-      ngx_conf_set_num_slot,
-      NGX_HTTP_LOC_CONF_OFFSET,
-      offsetof(ngx_http_footer_loc_conf_t, flen),
-      NULL },
 
       ngx_null_command
 };
@@ -123,18 +115,7 @@ ngx_http_footer_header_filter(ngx_http_request_t *r)
 
     ngx_http_set_ctx(r, ctx, ngx_http_footer_filter_module);
 
-	/* baseline allocate smartbuf per request */
-	ctx->smart_buf=ngx_create_temp_buf(r->pool,lcf->flen);
-	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-				   "Created smartbuf of size: %d", 
-				   ngx_buf_size(ctx->smart_buf));
-
-	ctx->smart_off=0;
-
     if (r->headers_out.content_length_n != -1) {
-		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-					   "http footer body filter: conent length: %d", 
-					   r->headers_out.content_length_n);
         r->headers_out.content_length_n += ctx->footer.len;
     }
 
@@ -152,85 +133,40 @@ ngx_http_footer_header_filter(ngx_http_request_t *r)
 static ngx_int_t
 ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 {
-    ngx_uint_t             last;
-    ngx_chain_t           *cl, *nl;
+    size_t             size;
+    ngx_buf_t             *b, *buf;
+    ngx_chain_t           *cl;
     ngx_http_footer_ctx_t *ctx;
 
-    ngx_http_footer_loc_conf_t *conf;
 
-    conf = ngx_http_get_module_loc_conf(r, ngx_http_footer_filter_module);
 
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "http footer body filter");
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_footer_filter_module);
     if (ctx == NULL) {
         return ngx_http_next_body_filter(r, in);
     }
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "http footer body filter");
 
-    last = 0;
 
+	cl=in;
+	b = cl->buf;
+	size = b->last - b->pos;
+	buf = ngx_create_temp_buf(r->pool, size);
 	/* do actual file size / CACHE_LINE_SIZE copies */
     for (cl = in; cl; cl = cl->next) {
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "comp_cpy");
+		b = cl->buf;
+        size = b->last - b->pos;
+		buf->last = ngx_cpymem(buf->pos, b->pos, size);
          if (cl->buf->last_buf) {
-             last = 1;
              break;
          }
     }
 
-    if (last) {
-		/* copy to remaining space within SmartDIMM buf */
-		nl=in;
-		if (nl == NULL){
-			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-						   "NULL start buffer" );
-			return NGX_ERROR;
-		}
-		int ccs=ngx_buf_size(nl->buf);
-		while (ctx->smart_off < conf->flen){
-			if ( ccs > (conf->flen - ctx->smart_off) ){
-				ccs = (conf->flen - ctx->smart_off);
-			}
-			ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-						   "copy %d to smartbuf, flen: %d, offset: %d", 
-						   ccs, conf->flen, ctx->smart_off );
-			*(ctx->smart_buf->start+ctx->smart_off)=*(u_char *)"foo";
-			ctx->smart_off+=sizeof("foo");
-		}
-		ctx->smart_buf->last=ctx->smart_buf->start+ctx->smart_off;
-		ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-					   "copy %d to smartbuf, flen: %d, offset: %d", 
-					   ccs, conf->flen, ctx->smart_off );
-	}
 
-	/*
-    buf->pos = ctx->footer.data;
-    buf->last = buf->pos + ctx->footer.len;
-    buf->start = buf->pos;
-    buf->end = buf->last;
-    buf->last_buf = 1;
-    buf->memory = 1;
-
-    if (ngx_buf_size(cl->buf) == 0) {
-        cl->buf = buf;
-    } else {
-        nl = ngx_alloc_chain_link(r->pool);
-        if (nl == NULL) {
-            return NGX_ERROR;
-        }
-
-        nl->buf = buf;
-        nl->next = NULL;
-        cl->next = nl;
-        cl->buf->last_buf = 0;
-    }
-	*/
-
-    int rc =  ngx_http_next_body_filter(r, in);
-	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-				   "After ret: %d", 
-				   ngx_buf_size(ctx->smart_buf));
-	return rc;
+    return  ngx_http_next_body_filter(r, in);
 }
 
 
@@ -267,7 +203,6 @@ ngx_http_footer_create_loc_conf(ngx_conf_t *cf)
     ngx_http_footer_loc_conf_t  *conf;
 
     conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_footer_loc_conf_t));
-	conf->flen=NGX_CONF_UNSET_SIZE;
     if (conf == NULL) {
         return NULL;
     }
