@@ -20,7 +20,7 @@ typedef struct {
 typedef struct {
     ngx_str_t                           footer;
 	ngx_buf_t							*smart_buf;
-	off_t								smart_off;
+	size_t								smart_off;
 	size_t								file_len;
 } ngx_http_footer_ctx_t;
 
@@ -109,6 +109,7 @@ ngx_http_footer_header_filter(ngx_http_request_t *r)
     }
 	ctx->file_len=lcf->file_len;
 	ctx->smart_buf=ngx_create_temp_buf(r->pool, ctx->file_len);
+	ctx->smart_off=0;
     ngx_http_set_ctx(r, ctx, ngx_http_footer_filter_module);
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "Created SmartBuf for storing file of len: %d ", 
@@ -151,6 +152,7 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     ngx_buf_t             *b, *buf;
     ngx_chain_t           *cl;
     ngx_http_footer_ctx_t *ctx;
+	ngx_uint_t 		   last=0;
 
 
 
@@ -174,13 +176,41 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 					   "comp_cpy");
 		b = cl->buf;
         size = b->last - b->pos;
-		buf->last = ngx_cpymem(buf->pos, b->pos, size);
+		buf->last = ngx_cpymem((buf->pos+ctx->smart_off), b->pos, size);
+		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "comp_cpy: @ %d", ctx->smart_off);
+		ctx->smart_off+=size;
          if (cl->buf->last_buf) {
+			 last = 1;
              break;
          }
     }
+	while ( last && ctx->smart_off < ctx->file_len
+			&& b->last > b->pos){
+		size=ctx->file_len-ctx->smart_off;
+		if ( size > (size_t)ngx_buf_size(b) )
+			size=ngx_buf_size(b);
+		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "comp_cpy remaining: @ %d", ctx->smart_off);
+		buf->last=ngx_cpymem((buf->pos+ctx->smart_off), b->pos,
+				size);
+		ctx->smart_off+=size;
+	}
 
 
+	/* buffer does not have enough contents to copy from */
+	if (last && ctx->smart_off < ctx->file_len)
+	{
+		/* copy from beginning of ngx buffer */
+		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "comp_cpy remaining ++ cl-buf has no content: @ %d", ctx->smart_off);
+		size=ctx->file_len-ctx->smart_off;
+		if ( size > ctx->smart_off )
+			size = ctx->smart_off;
+		buf->last=ngx_cpymem((buf->pos+ctx->smart_off), buf->pos,
+						size);
+		ctx->smart_off+=size;
+	}
     return  ngx_http_next_body_filter(r, in);
 }
 
