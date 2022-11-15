@@ -20,7 +20,7 @@ typedef struct {
 typedef struct {
     ngx_str_t                           footer;
 	ngx_buf_t							*smart_buf;
-	off_t								smart_off;
+	size_t								smart_off;
 	size_t								file_len;
 } ngx_http_footer_ctx_t;
 
@@ -152,9 +152,6 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     ngx_chain_t           *cl;
     ngx_http_footer_ctx_t *ctx;
 
-
-
-
     ctx = ngx_http_get_module_ctx(r, ngx_http_footer_filter_module);
     if (ctx == NULL) {
         return ngx_http_next_body_filter(r, in);
@@ -170,9 +167,8 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 
 
 	buf=ctx->smart_buf;
-	//buf = ngx_create_temp_buf(r->pool, size);
-	/* do actual file size / CACHE_LINE_SIZE copies */
-    for (cl = in; cl; cl = cl->next) {
+	for(cl=in; cl; cl=cl->next)
+	{
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 					   "comp_cpy");
 
@@ -196,25 +192,6 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 					   "Incremented smart_off");
     }
-	/*
-	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-				   "Size to copy: @ %d", size);
-	while ( ngx_buf_size(b)!=0 && last && ctx->smart_off < ctx->file_len
-			&& b->last > b->pos){
-		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-					   "In Copy Remaining");
-		size=ctx->file_len-ctx->smart_off;
-		if ( size > (size_t)ngx_buf_size(b) )
-			size=ngx_buf_size(b);
-		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-					   "comp_cpy remaining: @ %d", ctx->smart_off);
-		buf->last=ngx_cpymem((buf->pos+ctx->smart_off), b->pos,
-				size);
-		ctx->smart_off+=size;
-	}
-	*/
-
-
     return  ngx_http_next_body_filter(r, in);
 }
 
