@@ -93,7 +93,7 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 		ngx_http_set_ctx(r, ctx, ngx_http_footer_filter_module);
 		ctx->file_len=lcf->file_len;
 		ctx->smart_off=0;
-		ctx->smart_buf=ngx_palloc(r->pool, ctx->file_len);
+		ctx->smart_buf = ngx_create_temp_buf(r->pool, ctx->file_len);
 
     }
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -111,10 +111,15 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 					   "setting size to copy to dbuf");
         size = ngx_buf_size(cl->buf);
-		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-					   "copying to smart_buf");
 		/* repeat copy file data to start of smartDIMM buffer */
 		//buf->last = ngx_cpymem(buf->pos, cl->buf->file_pos, size);
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "writing to smart_buf");
+
+		*(buf->pos)='a';
+		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "copying to smart_buf");
+
 		buf->last = ngx_cpymem(buf->pos, cl->buf->pos, size);
 		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 					   "copied offset: @ %d", ctx->smart_off);
