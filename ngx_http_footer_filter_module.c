@@ -16,8 +16,9 @@ typedef struct {
 
 typedef struct {
 	ngx_buf_t							*smart_buf;
-	size_t								smart_off;
+	//size_t								smart_off;
 	size_t								file_len;
+	uint64_t							conf_rd_data;
 } ngx_http_footer_ctx_t;
 
 
@@ -92,7 +93,7 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 
 		ngx_http_set_ctx(r, ctx, ngx_http_footer_filter_module);
 		ctx->file_len=lcf->file_len;
-		ctx->smart_off=0;
+		//ctx->smart_off=0;
 		ctx->smart_buf = ngx_create_temp_buf(r->pool, ctx->file_len);
 
     }
@@ -121,14 +122,15 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 					   "copying to smart_buf");
 
 		buf->last = ngx_cpymem(buf->pos, cl->buf->pos, size);
-		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-					   "copied offset: @ %d", ctx->smart_off);
 		//ctx->smart_off+=size;
-		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-					   "Incremented smart_off");
+		if( cl->buf->last_buf ){
+			/* read the conf data to create the content-length header*/
+			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+						   "Reading Config Data");
+			ctx->conf_rd_data = *(uint64_t*) (ctx->smart_buf->pos + (ctx->file_len - 64));
+		}
+
     }
-	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-				   "smart_off:%zu full_file:%zu", ctx->smart_off, ctx->file_len );
 	
 
     return  ngx_http_next_body_filter(r, in);
