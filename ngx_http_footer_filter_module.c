@@ -107,13 +107,6 @@ ngx_http_footer_header_filter(ngx_http_request_t *r)
     if (ctx == NULL) {
        return NGX_ERROR;
     }
-	ctx->file_len=lcf->file_len;
-	ctx->smart_buf=ngx_create_temp_buf(r->pool, ctx->file_len);
-	ctx->smart_off=0;
-    ngx_http_set_ctx(r, ctx, ngx_http_footer_filter_module);
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                   "Created SmartBuf for storing file of len: %d ", 
-				   ctx->file_len);
     if (lcf->variable == (ngx_http_complex_value_t *) -1
         || r->header_only
         || (r->method & NGX_HTTP_HEAD)
@@ -123,6 +116,13 @@ ngx_http_footer_header_filter(ngx_http_request_t *r)
     {
         return ngx_http_next_header_filter(r);
     }
+	ctx->file_len=lcf->file_len;
+	ctx->smart_buf=ngx_create_temp_buf(r->pool, ctx->file_len);
+	ctx->smart_off=0;
+    ngx_http_set_ctx(r, ctx, ngx_http_footer_filter_module);
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "Created SmartBuf for storing file of len: %d ", 
+				   ctx->file_len);
 
 
     if (ngx_http_complex_value(r, lcf->variable, &ctx->footer) != NGX_OK) {
@@ -152,7 +152,7 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
     ngx_buf_t             *b, *buf;
     ngx_chain_t           *cl;
     ngx_http_footer_ctx_t *ctx;
-	ngx_uint_t 		   last=0;
+	//ngx_uint_t 		   last=0;
 
 
 
@@ -171,20 +171,29 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 	size = b->last - b->pos;
 	//buf = ngx_create_temp_buf(r->pool, size);
 	/* do actual file size / CACHE_LINE_SIZE copies */
-    for (cl = in; cl; cl = cl->next) {
+    if( r->header_only
+        || (r->method & NGX_HTTP_HEAD)
+        || r != r->main
+        || r->headers_out.status == NGX_HTTP_NO_CONTENT)
+	{
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-					   "comp_cpy");
+					   "hit header only/ no content");
+		return  ngx_http_next_body_filter(r, in);
+	}
+    for (cl = in; cl; cl = cl->next) {
 		b = cl->buf;
         size = b->last - b->pos;
 		buf->last = ngx_cpymem((buf->pos+ctx->smart_off), b->pos, size);
-		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-					   "comp_cpy: @ %d", ctx->smart_off);
+		ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "comp_cpy: @offset %d size:%d", ctx->smart_off, size);
 		ctx->smart_off+=size;
          if (cl->buf->last_buf) {
-			 last = 1;
+			 //last = 1;
              break;
          }
     }
+
+	/*
 	while ( last && ctx->smart_off < ctx->file_len
 			&& b->last > b->pos){
 		size=ctx->file_len-ctx->smart_off;
@@ -198,19 +207,36 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 	}
 
 
-	/* buffer does not have enough contents to copy from */
 	if (last && ctx->smart_off < ctx->file_len)
 	{
-		/* copy from beginning of ngx buffer */
-		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-					   "comp_cpy remaining ++ cl-buf has no content: @ %d", ctx->smart_off);
-		size=ctx->file_len-ctx->smart_off;
-		if ( size > ctx->smart_off )
-			size = ctx->smart_off;
-		buf->last=ngx_cpymem((buf->pos+ctx->smart_off), buf->pos,
-						size);
-		ctx->smart_off+=size;
+		while ( ctx->smart_off < ctx->file_len ){
+			ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+						   "comp_cpy remaining ++ cl-buf has no content: @ %d", ctx->smart_off);
+			size=ctx->file_len-ctx->smart_off;
+			if ( size > ctx->smart_off )
+				size = ctx->smart_off;
+			buf->last=ngx_cpymem((buf->pos+ctx->smart_off), buf->pos,
+							size);
+			ctx->smart_off+=size;
+		}
 	}
+	*/
+	/*
+	if ( last && in != NULL ){
+		while ( ctx->smart_off < ctx->file_len && size > 0){
+			if ( ctx->smart_off <= ctx->file_len - ctx->smart_off )
+				size = ctx->smart_off;
+			else
+				size = ctx->file_len - ctx->smart_off;
+
+			ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+						   "comp_cpy remaining: to offset %d, size: %d", ctx->smart_off, size);
+			buf->last=ngx_cpymem((buf->pos+ctx->smart_off), buf->pos,
+					size);
+			ctx->smart_off += size;
+		}
+	}
+	*/
     return  ngx_http_next_body_filter(r, in);
 }
 
