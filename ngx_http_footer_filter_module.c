@@ -148,7 +148,7 @@ static ngx_int_t
 ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 {
     size_t             size;
-    ngx_buf_t             *b, *buf;
+    ngx_buf_t             *buf;
     ngx_chain_t           *cl;
     ngx_http_footer_ctx_t *ctx;
 
@@ -172,26 +172,29 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 					   "comp_cpy");
 
+		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+					   "size:%d", cl->buf->last-cl->buf->pos);
 		if (cl->buf->last_buf)
 			break;
-		b=cl->buf;
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 					   "aliased cl's buf");
-		if (ngx_buf_size(b) == 0)
-			continue;
 
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 					   "setting size to copy to dbuf");
-        size = b->last - b->pos;
+        size = cl->buf->last - cl->buf->pos;
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 					   "copying to smart_buf");
-		buf->last = ngx_cpymem((buf->pos+ctx->smart_off), b->pos, size);
+		buf->last = ngx_cpymem((buf->pos+ctx->smart_off), cl->buf->pos, size);
 		ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 					   "copied offset: @ %d", ctx->smart_off);
 		ctx->smart_off+=size;
 		ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 					   "Incremented smart_off");
     }
+	ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+				   "smart_off:%zu full_file:%zu", ctx->smart_off, ctx->file_len );
+	
+
     return  ngx_http_next_body_filter(r, in);
 }
 
