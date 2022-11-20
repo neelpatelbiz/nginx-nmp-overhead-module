@@ -7,6 +7,7 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
+#include <x86intrin.h>
 
 
 typedef struct {
@@ -93,6 +94,7 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 		ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_footer_ctx_t));	
 
 		ngx_http_set_ctx(r, ctx, ngx_http_footer_filter_module);
+		
 		ctx->file_len=lcf->file_len;
 
 		ctx->smart_off=0;
@@ -131,6 +133,7 @@ ngx_http_footer_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
 			ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 						   "Copying Remaining File Data:%d", ctx->file_len-ctx->smart_off);
 			buf->last = ngx_cpymem(buf->pos, ctx->rem_buf->pos, ctx->file_len-ctx->smart_off);
+			_mm_clflush(buf->pos);
 
 			/* read the conf data to create the content-length header*/
 			ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
